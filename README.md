@@ -21,7 +21,7 @@ pip install -r requirements.txt
 echo "GEMINI_API_KEY=your-key" > .env
 
 # Run the web application
-python main.py
+python3 main.py
 
 # Open browser to http://localhost:5000
 ```
@@ -137,7 +137,7 @@ mini-ai-assistant/
 
 5. **Run the application:**
    ```bash
-   python main.py
+   python3 main.py
    ```
 
 6. **Open your browser:**
