@@ -29,9 +29,13 @@ env/
 # Environment variables
 .env
 
-# JSON data files (contains user data)
+# JSON data files (legacy - migrated to SQLite)
 storage.json
 history.json
+
+# SQLite database
+*.db
+*.db-journal
 
 # IDE
 .idea/

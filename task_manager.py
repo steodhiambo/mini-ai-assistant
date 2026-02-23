@@ -1,76 +1,95 @@
 """
 Task management module.
 
-Handles CRUD operations for tasks with local JSON persistence.
+Handles CRUD operations for tasks with SQLite database persistence.
+Uses database.py for all storage operations.
 Each task has an auto-incrementing ID, name, and completion status.
+
+Note: This module maintains backward compatibility by checking for
+legacy JSON storage and migrating if needed.
 """
 
-import json
-from pathlib import Path
 from typing import List, Dict, Any, Optional
+from database import (
+    init_db,
+    db_add_task,
+    db_list_tasks,
+    db_complete_task,
+    db_delete_task,
+    db_get_task,
+    db_clear_completed_tasks
+)
 
-# Path to the tasks JSON file
-TASKS_FILE = Path(__file__).parent / "storage.json"
+# Ensure database is initialized on module load
+init_db()
+
+
+def _migrate_from_json():
+    """
+    Migrate tasks from legacy JSON storage to SQLite.
+    
+    This function checks for the old storage.json file and
+    migrates any existing tasks to the SQLite database.
+    """
+    import json
+    from pathlib import Path
+    
+    json_file = Path(__file__).parent / "storage.json"
+    if not json_file.exists():
+        return
+    
+    try:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            tasks = json.load(f)
+        
+        if tasks:
+            # Migrate each task
+            with open(json_file, 'w', encoding='utf-8') as f:
+                json.dump([], f)  # Clear JSON file after migration
+            
+            for task in tasks:
+                name = task.get('name', '')
+                completed = task.get('completed', False)
+                
+                if name:
+                    result = db_add_task(name)
+                    if result and completed:
+                        db_complete_task(result['id'])
+    except (json.JSONDecodeError, IOError):
+        pass  # Ignore migration errors
+
+
+# Run migration on module load (one-time)
+_migrate_from_json()
 
 
 def load_tasks() -> List[Dict[str, Any]]:
     """
-    Load tasks from JSON file.
+    Load tasks from the database.
     
     Returns:
         List of task dictionaries. Each task has:
         - id: integer task identifier
         - name: string task description
         - completed: boolean completion status
-        Returns empty list if file doesn't exist or is invalid.
     """
-    if not TASKS_FILE.exists():
-        return []
-    
-    try:
-        with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-            tasks = json.load(f)
-            # Validate structure
-            if isinstance(tasks, list):
-                return tasks
-            return []
-    except (json.JSONDecodeError, IOError):
-        # Return empty list if file is corrupted or unreadable
-        return []
+    return db_list_tasks()
 
 
 def save_tasks(tasks: List[Dict[str, Any]]) -> bool:
     """
-    Save tasks to JSON file.
+    Save tasks - kept for API compatibility.
+    
+    Note: With SQLite, individual operations persist immediately.
+    This function is kept for backward compatibility but is a no-op.
     
     Args:
-        tasks: List of task dictionaries to save.
+        tasks: List of task dictionaries (ignored).
         
     Returns:
-        True if save was successful, False otherwise.
+        True (always successful).
     """
-    try:
-        with open(TASKS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(tasks, f, indent=2, ensure_ascii=False)
-        return True
-    except IOError as e:
-        print(f"Error saving tasks: {e}")
-        return False
-
-
-def _get_next_id(tasks: List[Dict[str, Any]]) -> int:
-    """
-    Generate the next available task ID.
-    
-    Args:
-        tasks: Current list of tasks.
-        
-    Returns:
-        Next available integer ID (max existing ID + 1, or 1 if empty).
-    """
-    if not tasks:
-        return 1
-    return max(task.get('id', 0) for task in tasks) + 1
+    return True
 
 
 def add_task(task_name: str) -> Optional[Dict[str, Any]]:
@@ -83,22 +102,7 @@ def add_task(task_name: str) -> Optional[Dict[str, Any]]:
     Returns:
         The created task dictionary if successful, None otherwise.
     """
-    if not task_name or not task_name.strip():
-        return None
-    
-    tasks = load_tasks()
-    
-    new_task = {
-        "id": _get_next_id(tasks),
-        "name": task_name.strip(),
-        "completed": False
-    }
-    
-    tasks.append(new_task)
-    
-    if save_tasks(tasks):
-        return new_task
-    return None
+    return db_add_task(task_name)
 
 
 def list_tasks() -> List[Dict[str, Any]]:
@@ -108,7 +112,7 @@ def list_tasks() -> List[Dict[str, Any]]:
     Returns:
         List of all task dictionaries.
     """
-    return load_tasks()
+    return db_list_tasks()
 
 
 def complete_task(task_id: int) -> Optional[Dict[str, Any]]:
@@ -121,16 +125,7 @@ def complete_task(task_id: int) -> Optional[Dict[str, Any]]:
     Returns:
         The updated task dictionary if successful, None if task not found.
     """
-    tasks = load_tasks()
-    
-    for task in tasks:
-        if task.get('id') == task_id:
-            task['completed'] = True
-            save_tasks(tasks)
-            return task
-    
-    # Task not found
-    return None
+    return db_complete_task(task_id)
 
 
 def delete_task(task_id: int) -> bool:
@@ -143,14 +138,7 @@ def delete_task(task_id: int) -> bool:
     Returns:
         True if task was deleted, False if not found.
     """
-    tasks = load_tasks()
-    
-    original_length = len(tasks)
-    tasks = [task for task in tasks if task.get('id') != task_id]
-    
-    if len(tasks) < original_length:
-        return save_tasks(tasks)
-    return False
+    return db_delete_task(task_id)
 
 
 def get_task_by_id(task_id: int) -> Optional[Dict[str, Any]]:
@@ -163,12 +151,17 @@ def get_task_by_id(task_id: int) -> Optional[Dict[str, Any]]:
     Returns:
         The task dictionary if found, None otherwise.
     """
-    tasks = load_tasks()
+    return db_get_task(task_id)
+
+
+def clear_completed() -> int:
+    """
+    Remove all completed tasks.
     
-    for task in tasks:
-        if task.get('id') == task_id:
-            return task
-    return None
+    Returns:
+        Number of tasks removed.
+    """
+    return db_clear_completed_tasks()
 
 
 def format_tasks_for_display(tasks: List[Dict[str, Any]]) -> str:
