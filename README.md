@@ -280,3 +280,7 @@ This project is provided as-is for educational and personal use.
 - **Database**: SQLite3
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript
 - **Styling**: Custom CSS with dark theme and blue accents
+
+## Author
+
+[STEPHEN OGINGA](https://github.com/steodhiambo)
