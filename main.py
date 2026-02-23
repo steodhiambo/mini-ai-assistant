@@ -1,21 +1,4 @@
-#!/usr/bin/env python3
-"""
-Mini Personal AI Assistant - Web Application
 
-A lightweight AI assistant powered by Google Gemini that:
-- Manages tasks using natural language
-- Answers general knowledge questions
-- Automatically routes user intent using Gemini function calling
-- Maintains conversational memory
-- Provides a modern web interface
-
-Usage:
-    python main.py
-
-Environment:
-    Set GEMINI_API_KEY environment variable or create a .env file:
-    GEMINI_API_KEY=your-api-key-here
-"""
 
 import os
 import sys
