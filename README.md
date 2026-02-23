@@ -1,46 +1,97 @@
 # Mini Personal AI Assistant
 
-A lightweight, production-quality AI assistant powered by Google Gemini that manages tasks, answers questions, and maintains conversational memory using official function calling.
+A lightweight, production-quality AI assistant powered  powered by Google Gemini that manages tasks, answers questions, and maintains conversational memory using official function calling.
 
 ## Features
 
 - **Task Management**: Add, list, and complete tasks using natural language
 - **General Knowledge Q&A**: Ask questions and get conversational answers
 - **Smart Intent Routing**: Gemini automatically decides whether to call a function or respond with text
-- **Conversational Memory**: Maintains context across the conversation (last 10 messages)
-- **Local Persistence**: Tasks and history stored in JSON files
-- **Clean CLI Interface**: Simple, intuitive command-line interaction
+- **Conversational Memory**: Maintains context across the conversation
+- **SQLite Database**: Robust local storage for tasks and history
+- **Modern Web UI**: Beautiful, responsive interface with dark theme and blue accents
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Set your API key
+echo "GEMINI_API_KEY=your-key" > .env
+
+# Run the web application
+python main.py
+
+# Open browser to http://localhost:5000
+```
 
 ## Architecture
 
 ```
 mini-ai-assistant/
 │
-├── main.py           # CLI entry point and main loop
-├── gemini_client.py  # Gemini API wrapper with function calling
-├── task_manager.py   # Task CRUD operations
-├── memory.py         # Conversation history management
-├── storage.json      # Persistent task storage
-├── history.json      # Persistent conversation history
-├── requirements.txt  # Python dependencies
-└── README.md         # This file
+├── main.py              # Web application entry point
+├── web_ui.py            # Flask web server and API endpoints
+├── gemini_client.py     # Gemini API wrapper with function calling
+├── task_manager.py      # Task CRUD operations
+├── memory.py            # Conversation history management
+├── database.py          # SQLite database operations
+├── assistant.db         # SQLite database file (auto-created)
+├── requirements.txt     # Python dependencies
+├── templates/           # HTML templates for web UI
+│   ├── index.html       # Chat interface
+│   ├── tasks.html       # Task management dashboard
+│   └── stats.html       # Statistics page
+└── README.md            # This file
 ```
 
 ### Module Responsibilities
 
 | Module | Purpose |
 |--------|---------|
-| `main.py` | CLI loop, user input handling, response processing |
+| `main.py` | Application entry point, initializes database and web server |
+| `web_ui.py` | Flask server, REST API, web routes |
 | `gemini_client.py` | API configuration, function declarations, message routing |
 | `task_manager.py` | Task persistence, CRUD operations |
 | `memory.py` | History loading/saving, message limit enforcement |
+| `database.py` | SQLite connection, migrations, queries |
 
-### Function Calling Flow
+### System Architecture
 
 ```
-User Input → Gemini API → Function Call? → Execute → Response to Gemini → Final Response
-                              ↓
-                          Text Response → Display
+┌─────────────────────────────────────────────────────────────┐
+│                     Web UI (Flask)                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Chat      │  │   Tasks     │  │      Stats          │  │
+│  │  Interface  │  │  Dashboard  │  │     Dashboard       │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                            │
+            ┌───────────────▼────────────────┐
+            │     REST API Endpoints         │
+            │  /api/chat, /api/tasks, etc.   │
+            └───────────────┬────────────────┘
+                            │
+            ┌───────────────▼──────────────┐
+            │    Gemini Client Layer       │
+            │   (gemini_client.py)         │
+            │  - Function Calling          │
+            │  - Intent Detection          │
+            └───────────────┬──────────────┘
+                            │
+            ┌───────────────▼──────────────┐
+            │     Business Logic           │
+            │  - task_manager.py           │
+            │  - memory.py                 │
+            └───────────────┬──────────────┘
+                            │
+            ┌───────────────▼──────────────┐
+            │    SQLite Database           │
+            │  - assistant.db              │
+            │  - tasks table               │
+            │  - conversation_history      │
+            └──────────────────────────────┘
 ```
 
 ## Setup Instructions
@@ -54,12 +105,13 @@ User Input → Gemini API → Function Call? → Execute → Response to Gemini 
 
 1. **Clone or navigate to the project directory:**
    ```bash
+   git clone https://github.com/steodhiambo/mini-ai-assistant.git
    cd mini-ai-assistant
    ```
 
 2. **Create a virtual environment (recommended):**
    ```bash
-   python -m venv venv
+   python3 -m venv venv
    source venv/bin/activate  # Linux/macOS
    # or
    venv\Scripts\activate     # Windows
@@ -83,126 +135,132 @@ User Input → Gemini API → Function Call? → Execute → Response to Gemini 
    export GEMINI_API_KEY='your-api-key-here'
    ```
 
-5. **Run the assistant:**
+5. **Run the application:**
    ```bash
    python main.py
    ```
 
-## Example Usage
+6. **Open your browser:**
+   - Local: http://localhost:5000
+   - Network: http://YOUR_IP:5000
 
-### Starting the Assistant
+## Usage
 
-```bash
-$ export GEMINI_API_KEY='your-api-key-here'
-$ python main.py
+### Web Interface
 
-╔═══════════════════════════════════════════════════════════╗
-║           Mini Personal AI Assistant                      ║
-║           Powered by Google Gemini                        ║
-╚═══════════════════════════════════════════════════════════╝
+The application provides three main pages:
 
-I can help you manage tasks and answer questions!
+#### 1. Chat (Home)
+- Conversational interface with the AI
+- Type naturally: "Add buy groceries to my tasks"
+- Ask questions: "What is machine learning?"
+- Suggestion chips for quick actions
 
-Commands:
-  • Just ask me anything or tell me to add/complete tasks
-  • Type 'tasks' to see your task list
-  • Type 'clear' to clear conversation history
-  • Type 'quit' or 'exit' to end the session
-  • Press Ctrl+C to exit anytime
+#### 2. Tasks Dashboard
+- View all tasks with status indicators
+- Add new tasks with the + button
+- Click checkbox to complete tasks
+- Delete tasks individually or clear all completed
 
-Using model: gemini-1.5-flash
---------------------------------------------------
-```
+#### 3. Statistics
+- View task completion metrics (total, pending, completed)
+- Track conversation history count
+- Visual progress bar showing completion rate
+- Clear chat history option
 
-### Task Management
+### Example Interactions
 
-```
-You: Add a task to buy groceries
+| User Input | AI Response |
+|------------|-------------|
+| "Add buy groceries to my tasks" | Adds task and confirms |
+| "Show me my tasks" | Lists all pending tasks |
+| "Complete task 1" | Marks task as done |
+| "What is Python?" | Answers the question |
+| "Explain AI" | Provides explanation |
 
-Assistant: I've added "buy groceries" to your task list with ID 1. Is there anything else you'd like me to help you with?
+### API Endpoints
 
-You: Add another task - call the dentist tomorrow
-
-Assistant: I've added "call the dentist tomorrow" to your task list with ID 2.
-
-You: Show me my tasks
-
-Assistant: [1] ○ buy groceries
-[2] ○ call the dentist tomorrow
-
-You: Complete task 1
-
-Assistant: Task 1 "buy groceries" has been marked as completed.
-
-You: tasks
-
-Assistant: [1] ✓ buy groceries
-[2] ○ call the dentist tomorrow
-```
-
-### General Questions
-
-```
-You: What's the capital of France?
-
-Assistant: The capital of France is Paris. It's the country's largest city and a major European hub for art, fashion, culture, and business.
-
-You: Can you explain quantum computing in simple terms?
-
-Assistant: Quantum computing is a type of computing that uses quantum mechanics principles...
-```
-
-### CLI Commands
-
-```
-You: tasks      # Show all tasks
-You: clear      # Clear conversation history
-You: quit       # Exit the assistant
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Chat interface |
+| `/tasks` | GET | Task dashboard |
+| `/stats` | GET | Statistics page |
+| `/api/chat` | POST | Send chat message |
+| `/api/tasks` | GET | Get all tasks |
+| `/api/tasks` | POST | Add new task |
+| `/api/tasks/<id>/complete` | POST | Complete task |
+| `/api/tasks/<id>` | DELETE | Delete task |
+| `/api/history` | GET | Get chat history |
+| `/api/history` | DELETE | Clear history |
+| `/api/stats` | GET | Get statistics |
 
 ## Assumptions
 
-1. **API Key**: The user has a valid Google Gemini API key and sets it via the `GEMINI_API_KEY` environment variable.
+1. **API Key**: The user has a valid Google Gemini API key.
 
-2. **Internet Connection**: The assistant requires an active internet connection to communicate with the Gemini API.
+2. **Internet Connection**: Required for Gemini API communication.
 
-3. **File Permissions**: The application has read/write permissions for `storage.json` and `history.json` in the project directory.
+3. **File Permissions**: Write access for `assistant.db` in the project directory.
 
-4. **Python Version**: Python 3.8+ is available with pip for package installation.
+4. **Python Version**: Python 3.8+ with pip.
 
-5. **Token Limits**: History is limited to 10 messages to stay within token limits and reduce API costs.
+5. **Single User**: Designed for personal/single-user usage.
+
+## Database Schema
+
+### tasks table
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key, auto-increment |
+| name | TEXT | Task description |
+| completed | INTEGER | 0 = pending, 1 = completed |
+| created_at | TIMESTAMP | Creation timestamp |
+| completed_at | TIMESTAMP | Completion timestamp |
+
+### conversation_history table
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key, auto-increment |
+| role | TEXT | 'user' or 'model' |
+| content | TEXT | Message content |
+| created_at | TIMESTAMP | Message timestamp |
 
 ## Future Improvements
 
-- [ ] **Task Editing**: Add ability to modify existing tasks
-- [ ] **Task Deletion**: Add ability to delete tasks (beyond completion)
-- [ ] **Due Dates**: Support for task deadlines and reminders
-- [ ] **Task Categories**: Organize tasks by project or category
-- [ ] **Search**: Search tasks by keyword
-- [ ] **Export/Import**: Backup and restore tasks
-- [ ] **Multiple Users**: Support for multiple user profiles
-- [ ] **Voice Input**: Speech-to-text integration
-- [ ] **GUI Option**: Optional graphical interface
-- [ ] **More Functions**: Calendar integration, email, weather, etc.
-- [ ] **Streaming Responses**: Real-time response streaming
-- [ ] **Custom Prompts**: User-configurable system prompts
+- [ ] Task due dates and reminders
+- [ ] Task categories/tags
+- [ ] Search functionality
+- [ ] Task priorities
+- [ ] Export/import data
+- [ ] Multiple user profiles
+- [ ] Voice input support
+- [ ] Calendar integration
+- [ ] Email notifications
+- [ ] Dark/light theme toggle
+- [ ] Custom AI prompts
 
 ## Troubleshooting
 
 ### API Key Error
 ```
-Error: GEMINI_API_KEY environment variable not set.
+Warning: GEMINI_API_KEY not set.
 ```
-**Solution**: Set your API key: `export GEMINI_API_KEY='your-key'`
+**Solution**: Set your API key in `.env` or export it.
 
-### Import Error
+### Port Already in Use
 ```
-ModuleNotFoundError: No module named 'google.generativeai'
+Address already in use
 ```
-**Solution**: Install dependencies: `pip install -r requirements.txt`
+**Solution**: Edit `web_ui.py` and change the default port from 5000 to another value.
+
+### Database Errors
+```
+no such table: tasks
+```
+**Solution**: Delete `assistant.db` and restart - tables will be recreated.
 
 ### Rate Limiting
-If you encounter rate limiting, the Gemini API may have usage quotas. Check your API dashboard.
+If you encounter rate limiting, wait a minute or check your API quota at [Google AI Studio](https://makersuite.google.com/).
 
 ## License
 
@@ -213,4 +271,12 @@ This project is provided as-is for educational and personal use.
 1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
 2. Sign in with your Google account
 3. Click "Create API Key"
-4. Copy the key and set it as `GEMINI_API_KEY` environment variable
+4. Copy the key to your `.env` file
+
+## Tech Stack
+
+- **Backend**: Python 3, Flask
+- **AI**: Google Gemini API (google-genai SDK)
+- **Database**: SQLite3
+- **Frontend**: HTML5, CSS3, Vanilla JavaScript
+- **Styling**: Custom CSS with dark theme and blue accents
