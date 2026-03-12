@@ -1,5 +1,4 @@
-"""
-Database module for SQLite operations.
+"""Database module for SQLite operations.
 
 Provides a unified database interface for:
 - Task storage and retrieval
@@ -11,15 +10,22 @@ import sqlite3
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
+import threading
+
+from config import Config
+from logger import logger
 
 # Path to the SQLite database file
-DB_FILE = Path(__file__).parent / "assistant.db"
+DB_FILE = Config.DB_FILE
+
+# Thread-local storage for connections
+_thread_local = threading.local()
 
 
 @contextmanager
 def get_connection():
     """
-    Context manager for database connections.
+    Context manager for database connections with thread safety.
     
     Yields:
         sqlite3.Connection object for database operations.
@@ -28,12 +34,24 @@ def get_connection():
         with get_connection() as conn:
             cursor = conn.execute("SELECT * FROM tasks")
     """
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row  # Enable column access by name
+    # Check if thread already has a connection
+    if not hasattr(_thread_local, 'conn') or _thread_local.conn is None:
+        _thread_local.conn = sqlite3.connect(
+            DB_FILE,
+            timeout=10.0,  # Prevent blocking
+            check_same_thread=False
+        )
+        _thread_local.conn.row_factory = sqlite3.Row  # Enable column access by name
+    
     try:
-        yield conn
+        yield _thread_local.conn
+    except Exception as e:
+        logger.error(f"Database error: {e}")
+        _thread_local.conn.rollback()
+        raise
     finally:
-        conn.close()
+        # Don't close connection, keep it for thread reuse
+        pass
 
 
 def init_db():
@@ -46,35 +64,40 @@ def init_db():
     
     This function is idempotent - safe to call multiple times.
     """
-    with get_connection() as conn:
-        # Create tasks table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                completed INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP
-            )
-        """)
-        
-        # Create conversation history table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Create index for faster history retrieval
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_history_created 
-            ON conversation_history(created_at DESC)
-        """)
-        
-        conn.commit()
+    try:
+        with get_connection() as conn:
+            # Create tasks table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    completed INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+            """)
+            
+            # Create conversation history table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create index for faster history retrieval
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_history_created 
+                ON conversation_history(created_at DESC)
+            """)
+            
+            conn.commit()
+            logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise
 
 
 # ============== Task Operations ==============
