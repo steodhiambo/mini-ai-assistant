@@ -1,26 +1,41 @@
-"""
-Web UI module for the Mini AI Assistant.
+"""Web UI module for the Mini AI Assistant.
 
 Provides a Flask-based web interface with:
 - Chat interface for interacting with the AI
 - Task management dashboard
 - Real-time updates via JavaScript fetch
+- Security features: XSS protection, rate limiting, input validation
 """
 
 import os
+import html
 from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
 from gemini_client import configure_api, send_message, get_model_info
 from task_manager import add_task, list_tasks, complete_task, delete_task, format_tasks_for_display
 from memory import append_message, get_history, clear_history
 from database import init_db, db_get_stats
+from config import Config
+from validators import sanitize_html, validate_task_name, validate_message, validate_task_id, sanitize_api_response
+from logger import logger
 
 # Load environment variables
 load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
+app.config['SECRET_KEY'] = Config.SECRET_KEY
+
+# Initialize rate limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=[Config.RATE_LIMIT_DEFAULT] if Config.RATE_LIMIT_ENABLED else [],
+    storage_uri="memory://"
+)
 
 # Ensure database and API are initialized
 init_db()
@@ -50,6 +65,7 @@ def stats_page():
 # ============== API Endpoints ==============
 
 @app.route('/api/chat', methods=['POST'])
+@limiter.limit("20 per minute")
 def api_chat():
     """
     Handle chat messages from the web interface.
@@ -57,28 +73,46 @@ def api_chat():
     Expects JSON: {"message": "user input"}
     Returns JSON: {"response": "AI response"}
     """
-    data = request.get_json()
-    user_message = data.get('message', '').strip()
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        user_message = data.get('message', '').strip()
+        
+        # Validate input
+        is_valid, error_msg = validate_message(user_message)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Sanitize input
+        user_message = sanitize_html(user_message)
+        
+        logger.info(f"Received chat message: {user_message[:50]}...")
+        
+        # Save user message to history
+        append_message("user", user_message)
+        
+        # Get conversation history
+        history = get_history()
+        
+        # Send to Gemini
+        response = send_message(user_message, history[:-1])  # Exclude current message
+        
+        # Process response
+        ai_response = process_chat_response(response)
+        
+        # Sanitize response
+        ai_response = sanitize_html(ai_response)
+        
+        # Save AI response to history
+        append_message("model", ai_response)
+        
+        return jsonify({"response": ai_response})
     
-    if not user_message:
-        return jsonify({"error": "Empty message"}), 400
-    
-    # Save user message to history
-    append_message("user", user_message)
-    
-    # Get conversation history
-    history = get_history()
-    
-    # Send to Gemini
-    response = send_message(user_message, history[:-1])  # Exclude current message
-    
-    # Process response
-    ai_response = process_chat_response(response)
-    
-    # Save AI response to history
-    append_message("model", ai_response)
-    
-    return jsonify({"response": ai_response})
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 
 def process_chat_response(response):
@@ -155,32 +189,64 @@ def execute_function_call(func_call):
 @app.route('/api/tasks', methods=['GET'])
 def api_get_tasks():
     """Get all tasks as JSON."""
-    tasks = list_tasks()
-    return jsonify(tasks)
+    try:
+        tasks = list_tasks()
+        # Sanitize task data
+        sanitized_tasks = [sanitize_api_response(task) for task in tasks]
+        return jsonify(sanitized_tasks)
+    except Exception as e:
+        logger.error(f"Error getting tasks: {e}")
+        return jsonify({"error": "Failed to retrieve tasks"}), 500
 
 
 @app.route('/api/tasks', methods=['POST'])
+@limiter.limit("30 per minute")
 def api_add_task_endpoint():
     """Add a new task."""
-    data = request.get_json()
-    task_name = data.get('name', '').strip()
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        task_name = data.get('name', '').strip()
+        
+        # Validate input
+        is_valid, error_msg = validate_task_name(task_name)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Sanitize input
+        task_name = sanitize_html(task_name)
+        
+        logger.info(f"Adding task: {task_name}")
+        
+        result = add_task(task_name)
+        if result:
+            return jsonify(sanitize_api_response(result)), 201
+        return jsonify({"error": "Failed to add task"}), 500
     
-    if not task_name:
-        return jsonify({"error": "Task name required"}), 400
-    
-    result = add_task(task_name)
-    if result:
-        return jsonify(result), 201
-    return jsonify({"error": "Failed to add task"}), 500
+    except Exception as e:
+        logger.error(f"Error adding task: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route('/api/tasks/<int:task_id>/complete', methods=['POST'])
 def api_complete_task(task_id):
     """Mark a task as completed."""
-    result = complete_task(task_id)
-    if result:
-        return jsonify(result)
-    return jsonify({"error": "Task not found"}), 404
+    try:
+        # Validate task ID
+        is_valid, error_msg = validate_task_id(task_id)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        result = complete_task(task_id)
+        if result:
+            return jsonify(sanitize_api_response(result))
+        return jsonify({"error": "Task not found"}), 404
+    
+    except Exception as e:
+        logger.error(f"Error completing task {task_id}: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route('/api/tasks/<int:task_id>/toggle', methods=['POST'])
@@ -223,9 +289,19 @@ def api_toggle_task(task_id):
 @app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
 def api_delete_task(task_id):
     """Delete a task."""
-    if delete_task(task_id):
-        return jsonify({"success": True})
-    return jsonify({"error": "Task not found"}), 404
+    try:
+        # Validate task ID
+        is_valid, error_msg = validate_task_id(task_id)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        if delete_task(task_id):
+            return jsonify({"success": True})
+        return jsonify({"error": "Task not found"}), 404
+    
+    except Exception as e:
+        logger.error(f"Error deleting task {task_id}: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route('/api/history', methods=['GET'])
@@ -253,23 +329,33 @@ def api_get_stats():
 
 # ============== Run Server ==============
 
-def run_server(host='0.0.0.0', port=5000, debug=False):
+def run_server(host: str = None, port: int = None, debug: bool = None):
     """
     Run the Flask web server.
     
     Args:
-        host: Host to bind to (default: all interfaces).
-        port: Port to listen on (default: 5000).
-        debug: Enable debug mode (default: False).
+        host: Host to bind to (default: from config).
+        port: Port to listen on (default: from config).
+        debug: Enable debug mode (default: from config).
     """
+    host = host or Config.FLASK_HOST
+    port = port or Config.FLASK_PORT
+    debug = debug if debug is not None else Config.FLASK_DEBUG
+    
     # Ensure API is configured
     if not configure_api():
-        print("Warning: GEMINI_API_KEY not set. AI features will not work.")
+        logger.warning("GEMINI_API_KEY not set. AI features will not work.")
     
-    print(f"\n🌐 Starting Mini AI Assistant Web UI")
-    print(f"   Local:   http://localhost:{port}")
-    print(f"   Network: http://{get_local_ip()}:{port}")
-    print(f"\nPress Ctrl+C to stop the server\n")
+    logger.info(f"Starting Mini AI Assistant Web UI")
+    logger.info(f"Environment: {Config.get_environment()}")
+    logger.info(f"Local:   http://localhost:{port}")
+    
+    if host != '127.0.0.1':
+        logger.warning(f"Server exposed on all interfaces: {host}")
+        logger.warning("This is not recommended for production without proper security")
+        logger.info(f"Network: http://{get_local_ip()}:{port}")
+    
+    logger.info("Press Ctrl+C to stop the server")
     
     app.run(host=host, port=port, debug=debug)
 
@@ -279,11 +365,14 @@ def get_local_ip():
     import socket
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)  # Set timeout to prevent blocking
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
+        s.shutdown(socket.SHUT_RDWR)  # Proper socket shutdown
         s.close()
         return ip
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Could not determine local IP: {e}")
         return "127.0.0.1"
 
 
