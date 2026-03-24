@@ -1,11 +1,11 @@
-"""
-Gemini API client module.
+"""Gemini API client module.
 
 Handles interaction with Google's Gemini API including:
 - API configuration via environment variable or .env file
 - Function declarations for tool calling
 - Message generation with function routing
 - Response parsing for function calls vs text responses
+- Resource limits and timeout controls
 
 Uses the new google-genai package (successor to google-generativeai).
 """
@@ -19,13 +19,13 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+from config import Config
+from logger import logger
+
 # Load environment variables from .env file if it exists
 # This allows API key to be stored in .env instead of only environment
 ENV_FILE = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=ENV_FILE)
-
-# Gemini model to use (gemini-2.5-flash is the latest stable model)
-MODEL_NAME = "gemini-2.5-flash"
 
 
 @dataclass
@@ -95,8 +95,38 @@ def _get_tools_config() -> List[types.Tool]:
     ]
 
 
-# Global client instance (initialized in configure_api)
-_client: Optional[genai.Client] = None
+class GeminiClient:
+    """Gemini API client wrapper with configuration management."""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize the Gemini client."""
+        self.api_key = api_key or Config.GEMINI_API_KEY
+        self.client: Optional[genai.Client] = None
+        self.model_name = Config.GEMINI_MODEL
+        self.temperature = Config.GEMINI_TEMPERATURE
+        self.max_tokens = Config.GEMINI_MAX_TOKENS
+        self.timeout = Config.GEMINI_TIMEOUT
+        
+        if self.api_key:
+            self._initialize_client()
+    
+    def _initialize_client(self) -> bool:
+        """Initialize the Gemini API client."""
+        try:
+            self.client = genai.Client(api_key=self.api_key)
+            logger.info(f"Gemini client initialized with model: {self.model_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini client: {e}")
+            return False
+    
+    def is_configured(self) -> bool:
+        """Check if client is properly configured."""
+        return self.client is not None
+
+
+# Global client instance
+_gemini_client: Optional[GeminiClient] = None
 
 
 def configure_api(api_key: Optional[str] = None) -> bool:
@@ -104,22 +134,14 @@ def configure_api(api_key: Optional[str] = None) -> bool:
     Configure the Gemini API with the provided or environment key.
     
     Args:
-        api_key: Optional API key. If not provided, uses GEMINI_API_KEY env var.
+        api_key: Optional API key. If not provided, uses config.
         
     Returns:
         True if configuration successful, False otherwise.
     """
-    global _client
-    key = api_key or os.environ.get("GEMINI_API_KEY")
-    
-    if not key:
-        return False
-    
-    try:
-        _client = genai.Client(api_key=key)
-        return True
-    except Exception:
-        return False
+    global _gemini_client
+    _gemini_client = GeminiClient(api_key)
+    return _gemini_client.is_configured()
 
 
 def _convert_history_to_gemini_format(
@@ -170,9 +192,10 @@ def send_message(
     Returns:
         GeminiResponse containing either text or function call details.
     """
-    global _client
+    global _gemini_client
     
-    if _client is None:
+    if _gemini_client is None or not _gemini_client.is_configured():
+        logger.error("Gemini API not configured")
         return GeminiResponse(text="API not configured. Please set GEMINI_API_KEY.", is_function_call=False)
     
     try:
@@ -189,13 +212,14 @@ def send_message(
             )
         )
         
-        # Generate content with function calling enabled
-        response = _client.models.generate_content(
-            model=MODEL_NAME,
+        # Generate content with function calling enabled and resource limits
+        logger.info(f"Sending message to Gemini (length: {len(message)} chars)")
+        response = _gemini_client.client.models.generate_content(
+            model=_gemini_client.model_name,
             contents=contents,
             config=types.GenerateContentConfig(
-                temperature=0.7,
-                max_output_tokens=1024,
+                temperature=_gemini_client.temperature,
+                max_output_tokens=_gemini_client.max_tokens,
                 tools=_get_tools_config(),
             )
         )
@@ -235,6 +259,7 @@ def send_message(
         
     except Exception as e:
         # Handle API errors gracefully
+        logger.error(f"Gemini API error: {str(e)}")
         error_msg = f"Error communicating with Gemini: {str(e)}"
         return GeminiResponse(text=error_msg, is_function_call=False)
 
@@ -269,7 +294,15 @@ def get_model_info() -> Dict[str, Any]:
     Returns:
         Dictionary with model name and configuration status.
     """
+    global _gemini_client
+    if _gemini_client:
+        return {
+            "model_name": _gemini_client.model_name,
+            "configured": _gemini_client.is_configured(),
+            "max_tokens": _gemini_client.max_tokens,
+            "temperature": _gemini_client.temperature
+        }
     return {
-        "model_name": MODEL_NAME,
-        "configured": bool(os.environ.get("GEMINI_API_KEY"))
+        "model_name": Config.GEMINI_MODEL,
+        "configured": False
     }
